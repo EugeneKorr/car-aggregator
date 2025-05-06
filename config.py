@@ -1,4 +1,3 @@
-cat > config.py << 'EOF'
 import os
 from dotenv import load_dotenv
 
@@ -20,4 +19,3 @@ class Config:
     
     # Настройки логирования
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-EOF
