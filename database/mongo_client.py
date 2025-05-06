@@ -19,7 +19,7 @@ class MongoDB:
             await self.client.admin.command("ping")
             
             # Инициализация БД и коллекций
-            self.db = self.client["car_aggregator"]
+            self.db = self.client["test"]
             self.cars_collection = self.db["cars"]
             
             # Создание индексов
