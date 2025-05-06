@@ -1,4 +1,3 @@
-cat > scrapers/kia_scraper.py << 'EOF'
 import json
 from datetime import datetime
 from urllib.parse import urljoin
@@ -183,4 +182,3 @@ class KiaScraper(BaseScraper):
             await self.db.save_car(processed_car)
         
         return processed_car
-EOF
