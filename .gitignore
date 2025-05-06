@@ -1,0 +1,17 @@
+echo "# Виртуальное окружение
+venv/
+env/
+.env
+
+# Кэш Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Логи
+logs/
+*.log
+
+# Дополнительные файлы IDE
+.idea/
+.vscode/" > .gitignore
