@@ -15,7 +15,7 @@ class Config:
     
     # URL для KIA Outlet
     KIA_BASE_URL = "https://www.kia.com/es/kia-outlet/vehiculos-disponibles/"
-    KIA_API_URL = "https://www.kia.com/es/ccs-api/stocks/list"
+    KIA_API_URL = KIA_BASE_URL
     
     # Настройки логирования
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
