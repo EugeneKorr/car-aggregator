@@ -176,4 +176,4 @@ async def start_app():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
-    web.run_app(start_app(), port=port)
+    web.run_app(start_app(), port=port, host='0.0.0.0')
