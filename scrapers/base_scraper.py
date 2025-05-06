@@ -1,5 +1,3 @@
-mkdir -p scrapers
-cat > scrapers/base_scraper.py << 'EOF'
 import asyncio
 import aiohttp
 import ssl
@@ -126,4 +124,3 @@ class BaseScraper:
         Преобразует сырые данные в единый формат
         """
         raise NotImplementedError("Метод должен быть реализован в дочернем классе")
-EOF
