@@ -11,7 +11,7 @@ from utils.logger import logger
 # Загружаем переменные окружения
 load_dotenv()
 
-# Инициализируем MongoDB
+#Инициализируем MongoDB
 db = MongoDB()
 
 async def initialize():
