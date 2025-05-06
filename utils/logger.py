@@ -1,5 +1,3 @@
-mkdir -p utils
-cat > utils/logger.py << 'EOF'
 import logging
 import os
 from config import Config
@@ -25,4 +23,3 @@ def setup_logging():
 
 # Создаем глобальный объект логгера
 logger = setup_logging()
-EOF
