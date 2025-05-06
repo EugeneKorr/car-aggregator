@@ -81,12 +81,6 @@ async def handle_get_cars(request):
         "count": len(cars),
         "cars": cars
     })
-        except Exception as e:
-            logger.error(f"❌ Ошибка при получении автомобилей: {e}")
-            return web.json_response({
-                "success": False,
-                "error": str(e)
-            }, status=500)
 
 async def handle_trigger_scraping(request):
     """
