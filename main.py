@@ -1,3 +1,6 @@
+print("Starting application...")
+import sys
+print(f"Python version: {sys.version}")
 cat > main.py << 'EOF'
 import asyncio
 import argparse
