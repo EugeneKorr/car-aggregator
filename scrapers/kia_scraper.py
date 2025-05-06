@@ -26,20 +26,19 @@ class KiaScraper(BaseScraper):
         
         logger.info(f"🔍 Запрос автомобилей KIA с фильтрами: {json.dumps(filters)}")
         
-        # Заголовки для имитации браузера
-        headers = self.get_headers()
-        headers.update({
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "es-ES,es;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Referer": "https://www.kia.com/es/",
-            "Origin": "https://www.kia.com"
-        })
+        # Обновляем заголовки в объекте сессии
+        if self.session and not self.session.closed:
+            self.session.headers.update({
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept-Language": "es-ES,es;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Referer": "https://www.kia.com/es/",
+                "Origin": "https://www.kia.com"
+            })
         
-        # Получаем HTML-страницу
+        # Получаем HTML-страницу (без передачи headers в метод)
         success, html_content = await self.fetch_with_retry(
             self.base_url,
-            method="GET",
-            headers=headers
+            method="GET"
         )
         
         if not success or not html_content:
