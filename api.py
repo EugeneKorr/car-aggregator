@@ -68,13 +68,19 @@ async def handle_get_cars(request):
         for car in cars:
             if "_id" in car:
                 car["_id"] = str(car["_id"])
-        
-        return web.json_
-return web.json_response({
-    "success": True,
-    "count": len(cars),
-    "cars": cars
-})
+    except Exception as e:
+        logger.error(f"❌ Ошибка при получении автомобилей: {e}")
+        return web.json_response({
+            "success": False,
+            "error": str(e)
+        }, status=500)
+    
+    # Этот return теперь вне блока try-except
+    return web.json_response({
+        "success": True,
+        "count": len(cars),
+        "cars": cars
+    })
         except Exception as e:
             logger.error(f"❌ Ошибка при получении автомобилей: {e}")
             return web.json_response({
