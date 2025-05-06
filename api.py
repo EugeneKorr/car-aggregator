@@ -1,7 +1,3 @@
-print("Starting application...")
-import sys
-print(f"Python version: {sys.version}")
-cat > api.py << 'EOF'
 import os
 import json
 import asyncio
@@ -178,5 +174,7 @@ async def start_app():
     return app
 
 if __name__ == '__main__':
+    print("Starting web server...")
     port = int(os.environ.get('PORT', 8080))
+    print(f"Using port: {port}")
     web.run_app(start_app(), port=port, host='0.0.0.0')
