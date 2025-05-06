@@ -1,5 +1,3 @@
-mkdir -p database
-cat > database/mongo_client.py << 'EOF'
 import asyncio
 from motor.motor_asyncio import AsyncIOMotorClient
 from config import Config
@@ -63,4 +61,3 @@ class MongoDB:
         except Exception as e:
             logger.error(f"❌ Ошибка при получении автомобилей: {e}")
             return []
-EOF
