@@ -420,9 +420,158 @@ class KiaScraper(BaseScraper):
             list: Сгенерированные данные автомобилей
         """
         logger.warning("⚠️ Использование резервных данных из-за недоступности API")
-        # Код для генерации резервных данных остается прежним
-        # ...
-        return []
+        
+        # Используем предварительно собранные данные о моделях KIA
+        kia_data = {
+            "disponibles": 975,
+            "kms": 112229,
+            "preciominimo": 9990,
+            "preciomaximo": 66340,
+            "anyminimo": 2020,
+            "anymaximo": 2025,
+            "modelos": [
+                {"nombre": "Ceed", "precio": "12999", "disponibles": "129"},
+                {"nombre": "Ceed Sportswagon", "precio": "15999", "disponibles": "7"},
+                {"nombre": "EV6", "precio": "28990", "disponibles": "43"},
+                {"nombre": "EV9", "precio": "61000", "disponibles": "6"},
+                {"nombre": "Niro", "precio": "17490", "disponibles": "121"},
+                {"nombre": "Niro EV", "precio": "21390", "disponibles": "40"},
+                {"nombre": "Picanto", "precio": "9990", "disponibles": "57"},
+                {"nombre": "ProCeed", "precio": "15990", "disponibles": "1"},
+                {"nombre": "Rio", "precio": "12200", "disponibles": "19"},
+                {"nombre": "Sorento", "precio": "35390", "disponibles": "20"},
+                {"nombre": "Soul Ev", "precio": "23350", "disponibles": "3"},
+                {"nombre": "Sportage", "precio": "17990", "disponibles": "191"},
+                {"nombre": "Stinger", "precio": "42950", "disponibles": "1"},
+                {"nombre": "Stonic", "precio": "13000", "disponibles": "155"},
+                {"nombre": "XCeed", "precio": "15999", "disponibles": "182"}
+            ],
+            "carrocerias": [
+                {"nombre": "5puertas", "disponibles": "29"},
+                {"nombre": "berlina", "disponibles": "28"}
+            ],
+            "cubicajes": [
+                {"nombre": "1000", "disponibles": "46"},
+                {"nombre": "1200", "disponibles": "11"}
+            ],
+            "cambiomarchas": [
+                {"nombre": "automatico", "disponibles": "2"},
+                {"nombre": "manual", "disponibles": "55"}
+            ],
+            "combustibles": [
+                {"nombre": "gasolina", "disponibles": "57"}
+            ],
+            "colores": [
+                {"nombre": "", "disponibles": "2"},
+                {"nombre": "azul", "disponibles": "2"},
+                {"nombre": "blanco", "disponibles": "22"},
+                {"nombre": "gris", "disponibles": "6"},
+                {"nombre": "marron", "disponibles": "4"},
+                {"nombre": "naranja", "disponibles": "1"},
+                {"nombre": "negro", "disponibles": "7"},
+                {"nombre": "plata", "disponibles": "10"},
+                {"nombre": "rojo", "disponibles": "3"}
+            ]
+        }
+        
+        # Сохраняем статистику по моделям
+        await self._save_models_stats(kia_data)
+        
+        # Подготавливаем список для хранения данных об автомобилях
+        all_cars = []
+        model_filter = filters.get("model", "")
+        
+        # Обрабатываем модели
+        for model_data in kia_data.get("modelos", []):
+            model_name = model_data.get("nombre", "")
+            model_price = self._extract_price(model_data.get("precio", "0"))
+            model_count = int(model_data.get("disponibles", "0"))
+            
+            # Если указан фильтр по модели и текущая модель не соответствует, пропускаем
+            if model_filter and model_name.lower() != model_filter.lower():
+                continue
+                
+            logger.info(f"🚗 Обработка модели: {model_name}, Цена от: {model_price}€, Доступно: {model_count}")
+            
+            # Для каждой машины данной модели создаем запись
+            for i in range(min(model_count, 5)):  # Ограничиваем до 5 машин на модель
+                # Генерируем уникальный ID автомобиля
+                idcoche = f"{hash(model_name + str(i)) % 10000000}"
+                car_id = f"kia_{model_name.lower().replace(' ', '_')}_{idcoche}"
+                
+                # Формируем детальные данные
+                year = random.randint(kia_data["anyminimo"], kia_data["anymaximo"])
+                
+                # Определяем топливо - для электромобилей указываем "Eléctrico"
+                fuel_type = "Eléctrico" if "EV" in model_name or "Ev" in model_name else "Gasolina"
+                
+                # Определяем тип кузова
+                body_type = random.choice([item["nombre"] for item in kia_data["carrocerias"]])
+                
+                # Определяем цвет
+                color = random.choice([item["nombre"] for item in kia_data["colores"] if item["nombre"]])
+                
+                # Определяем трансмиссию
+                transmission = random.choice([item["nombre"] for item in kia_data["cambiomarchas"]])
+                
+                # Определяем пробег
+                mileage = random.randint(0, 5000) if year >= 2023 else random.randint(5000, kia_data["kms"])
+                
+                # Формируем данные об автомобиле
+                car_data = {
+                    "car_id": car_id,
+                    "idcoche": idcoche,
+                    "brand": "KIA",
+                    "model": model_name,
+                    "version": f"{model_name} {fuel_type}",
+                    "title": f"KIA {model_name} {year}",
+                    "year": year,
+                    "mileage": mileage,
+                    "fuel_type": fuel_type,
+                    "transmission": transmission.capitalize(),
+                    "color_exterior": color.capitalize(),
+                    "color_interior": "Negro",
+                    "body_type": body_type,
+                    "power": random.choice([100, 120, 140, 160, 204]) if "EV" in model_name or "Ev" in model_name else random.choice([75, 85, 95, 110, 130]),
+                    "price": model_price + (i * 100),  # Немного варьируем цену
+                    "price_cash": model_price + (i * 100) + random.randint(500, 3000),  # Цена без кредита выше
+                    "images": [f"https://kiaokasion.net/kia/imagenes/placeholder_{model_name.lower().replace(' ', '_')}_{i}.jpg"],
+                    "features": [
+                        "Aire acondicionado",
+                        "Bluetooth",
+                        "USB",
+                        "Elevalunas eléctricos",
+                        "Cierre centralizado",
+                        "Dirección asistida",
+                        "Airbag",
+                        "ABS",
+                        "ESP"
+                    ],
+                    "dealer": "KIA Okasion",
+                    "dealer_location": "España",
+                    "dealer_email": "info@kiaokasion.es",
+                    "dealer_phone": "+34 900 100 200",
+                    "dealer_address": "Calle Principal, 123",
+                    "matriculation_date": f"{random.randint(1, 28)}/{random.randint(1, 12)}/{year}",
+                    "license_plate": f"{random.randint(1000, 9999)}{chr(65 + random.randint(0, 25))}{chr(65 + random.randint(0, 25)}{chr(65 + random.randint(0, 25)}",
+                    "url": f"{self.base_url}?modelo={model_name}",
+                    "warranty": f"{random.choice([24, 36, 48, 72])} месяцев",
+                    "engine_size": "0" if fuel_type == "Eléctrico" else random.choice(["1000", "1200", "1400", "1600"]),
+                    "emission_label": "0" if fuel_type == "Eléctrico" else random.choice(["B", "C", "ECO"]),
+                    "is_active": True,
+                    "first_seen": datetime.now().isoformat(),
+                    "last_updated": datetime.now().isoformat()
+                }
+                
+                all_cars.append(car_data)
+                
+                # Сохраняем в базу данных
+                success, is_new = await self.db.save_car(car_data)
+                if is_new:
+                    logger.info(f"✅ Добавлен новый автомобиль: {car_data['model']} (ID: {idcoche})")
+        
+        logger.info(f"✅ Создано {len(all_cars)} записей автомобилей")
+        return all_cars
     
     async def _generate_model_fallback_data(self, model_name, model_count):
         """
@@ -436,9 +585,137 @@ class KiaScraper(BaseScraper):
             list: Сгенерированные данные автомобилей
         """
         logger.warning(f"⚠️ Использование резервных данных для модели {model_name}")
-        # Код для генерации резервных данных для конкретной модели
-        # ...
-        return []
+        
+        # Определяем базовую цену модели на основе известных данных
+        base_price = 0
+        
+        # Модельный ряд KIA с ценами
+        kia_models_prices = {
+            "Ceed": 12999,
+            "Ceed Sportswagon": 15999,
+            "EV6": 28990,
+            "EV9": 61000,
+            "Niro": 17490,
+            "Niro EV": 21390,
+            "Picanto": 9990,
+            "ProCeed": 15990,
+            "Rio": 12200,
+            "Sorento": 35390,
+            "Soul Ev": 23350,
+            "Sportage": 17990,
+            "Stinger": 42950,
+            "Stonic": 13000,
+            "XCeed": 15999
+        }
+        
+        # Находим цену модели
+        if model_name in kia_models_prices:
+            base_price = kia_models_prices[model_name]
+        else:
+            # Если модель неизвестна, устанавливаем среднюю цену
+            base_price = 15000
+        
+        # Определяем доступные цвета
+        colors = ["Blanco", "Negro", "Gris", "Azul", "Rojo", "Plata", "Naranja", "Marrón"]
+        
+        # Определяем тип топлива
+        is_electric = "EV" in model_name or "Ev" in model_name
+        fuel_type = "Eléctrico" if is_electric else "Gasolina"
+        
+        # Годы выпуска
+        min_year = 2020
+        max_year = 2025
+        
+        # Подготавливаем список для хранения данных об автомобилях
+        cars_data = []
+        
+        # Генерируем данные для указанного количества автомобилей
+        for i in range(min(model_count, 5)):  # Ограничиваем до 5 машин на модель
+            # Генерируем уникальный ID автомобиля
+            idcoche = f"{hash(model_name + str(i)) % 10000000}"
+            car_id = f"kia_{model_name.lower().replace(' ', '_')}_{idcoche}"
+            
+            # Формируем детальные данные
+            year = random.randint(min_year, max_year)
+            
+            # Определяем пробег - новые машины имеют меньший пробег
+            mileage = random.randint(0, 5000) if year >= 2023 else random.randint(5000, 50000)
+            
+            # Определяем трансмиссию - электромобили чаще имеют автоматическую
+            transmission = "Automático" if is_electric or random.random() > 0.7 else "Manual"
+            
+            # Определяем цвет
+            color = random.choice(colors)
+            
+            # Определяем мощность двигателя
+            power = random.choice([100, 120, 140, 160, 204]) if is_electric else random.choice([75, 85, 95, 110, 130])
+            
+            # Формируем версию модели
+            version = f"{model_name} {power}CV {transmission}"
+            
+            # Генерируем случайную дату регистрации в этом году
+            registration_date = f"{random.randint(1, 28)}/{random.randint(1, 12)}/{year}"
+            
+            # Генерируем номерной знак
+            license_plate = f"{random.randint(1000, 9999)}{chr(65 + random.randint(0, 25))}{chr(65 + random.randint(0, 25))}{chr(65 + random.randint(0, 25))}"
+            
+            # Формируем данные об автомобиле
+            car_data = {
+                "car_id": car_id,
+                "idcoche": idcoche,
+                "brand": "KIA",
+                "model": model_name,
+                "version": version,
+                "title": f"KIA {model_name} {year}",
+                "year": year,
+                "mileage": mileage,
+                "fuel_type": fuel_type,
+                "transmission": transmission,
+                "color_exterior": color,
+                "color_interior": "Negro",
+                "body_type": "Berlina" if model_name in ["Ceed", "Rio"] else "SUV" if model_name in ["Sportage", "Sorento", "Stonic"] else "5puertas",
+                "power": power,
+                "price": base_price + (i * 100),  # Немного варьируем цену
+                "price_cash": base_price + (i * 100) + random.randint(500, 3000),  # Цена без кредита выше
+                "images": [f"https://kiaokasion.net/kia/imagenes/placeholder_{model_name.lower().replace(' ', '_')}_{i}.jpg"],
+                "features": [
+                    "Aire acondicionado",
+                    "Bluetooth",
+                    "USB",
+                    "Elevalunas eléctricos",
+                    "Cierre centralizado",
+                    "Dirección asistida",
+                    "Airbag",
+                    "ABS",
+                    "ESP"
+                ],
+                "dealer": "KIA Okasion",
+                "dealer_location": "España",
+                "dealer_email": "info@kiaokasion.es",
+                "dealer_phone": "+34 900 100 200",
+                "dealer_address": "Calle Principal, 123",
+                "matriculation_date": registration_date,
+                "license_plate": license_plate,
+                "url": f"{self.base_url}?modelo={model_name}",
+                "warranty": f"{random.choice([24, 36, 48, 72])} месяцев",
+                "engine_size": "0" if fuel_type == "Eléctrico" else random.choice(["1000", "1200", "1400", "1600"]),
+                "emission_label": "0" if fuel_type == "Eléctrico" else random.choice(["B", "C", "ECO"]),
+                "is_active": True,
+                "first_seen": datetime.now().isoformat(),
+                "last_updated": datetime.now().isoformat()
+            }
+            
+            cars_data.append(car_data)
+            
+            # Сохраняем в базу данных
+            success, is_new = await self.db.save_car(car_data)
+            if is_new:
+                logger.info(f"✅ Добавлен новый автомобиль: {car_data['model']} (ID: {idcoche})")
+            else:
+                logger.debug(f"✅ Обновлена информация об автомобиле: {car_data['model']} (ID: {idcoche})")
+        
+        logger.info(f"✅ Создано {len(cars_data)} записей автомобилей модели {model_name}")
+        return cars_data
     
     async def fetch_car_by_id(self, car_id):
         """
