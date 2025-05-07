@@ -56,7 +56,7 @@ class BaseScraper:
             "Upgrade-Insecure-Requests": "1"
         }
     
-    async def fetch_with_retry(self, url, method="GET", json=None, data=None, params=None):
+    async def fetch_with_retry(self, url, method="GET", json=None, data=None, params=None, headers=None):
         """
         Выполнение HTTP-запроса с повторными попытками при ошибках
         
@@ -66,6 +66,7 @@ class BaseScraper:
             json: JSON-данные для тела запроса
             data: Данные формы для тела запроса
             params: URL-параметры запроса
+            headers: Дополнительные заголовки запроса
             
         Returns:
             tuple: (статус_запроса, данные_ответа)
@@ -78,22 +79,26 @@ class BaseScraper:
                 await asyncio.sleep(random.uniform(1, 3))
                 
                 # Обновляем заголовки для каждого запроса
-                headers = self.get_headers()
+                request_headers = self.get_headers()
+                
+                # Добавляем пользовательские заголовки, если предоставлены
+                if headers:
+                    request_headers.update(headers)
                 
                 if method.upper() == "GET":
-                    async with self.session.get(url, headers=headers, params=params) as response:
+                    async with self.session.get(url, headers=request_headers, params=params) as response:
                         logger.debug(f"📡 GET-запрос к {url}, статус: {response.status}")
                         if response.status == 200:
-                            if 'application/json' in response.headers.get('Content-Type', ''):
+                            content_type = response.headers.get('Content-Type', '')
+                            if 'application/json' in content_type:
                                 data = await response.json()
                             else:
                                 data = await response.text()
                             return True, data
                         else:
                             logger.warning(f"⚠️ Статус {response.status} при запросе {url} (попытка {attempt})")
-                            # Логируем текст ответа для отладки
                             error_text = await response.text()
-                            logger.debug(f"📄 Текст ошибки: {error_text[:500]}...")
+                            logger.debug(f"📄 Текст ошибки: {error_text[:200]}...")
                 
                 elif method.upper() == "POST":
                     # Логируем параметры запроса для отладки
@@ -105,7 +110,7 @@ class BaseScraper:
                     if params:
                         logger.debug(f"📦 URL-параметры: {params}")
                     
-                    async with self.session.post(url, headers=headers, json=json, data=data, params=params) as response:
+                    async with self.session.post(url, headers=request_headers, json=json, data=data, params=params) as response:
                         logger.debug(f"📡 POST-запрос к {url}, статус: {response.status}")
                         if response.status == 200:
                             content_type = response.headers.get('Content-Type', '')
@@ -126,9 +131,8 @@ class BaseScraper:
                             return True, data
                         else:
                             logger.warning(f"⚠️ Статус {response.status} при запросе {url} (попытка {attempt})")
-                            # Логируем текст ответа для отладки
                             error_text = await response.text()
-                            logger.debug(f"📄 Текст ошибки: {error_text[:500]}...")
+                            logger.debug(f"📄 Текст ошибки: {error_text[:200]}...")
                 
                 # Экспоненциальное увеличение времени ожидания при повторных попытках
                 wait_time = Config.RETRY_DELAY * (2 ** (attempt - 1))
