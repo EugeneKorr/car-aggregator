@@ -14,8 +14,8 @@ class Config:
     RETRY_DELAY = int(os.getenv("RETRY_DELAY", "5"))
     
     # URL для KIA Outlet
-    KIA_BASE_URL = "https://www.kia.com/es/kia-outlet/vehiculos-disponibles/"
-    KIA_API_URL = KIA_BASE_URL
+    KIA_BASE_URL = "https://kiaokasion.net/kia/"
+    KIA_API_URL = "https://kiaokasion.net/kia/async/metodos.aspx"
     
     # Настройки логирования
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
