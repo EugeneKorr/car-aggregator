@@ -5,3 +5,5 @@ pymongo==4.5.0
 python-dotenv==1.0.0
 aiofiles==23.2.1
 pytz==2023.3
+selenium==4.15.2
+webdriver-manager==4.0.1
