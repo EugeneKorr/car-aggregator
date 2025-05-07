@@ -1,4 +1,4 @@
-echo "# Виртуальное окружение
+# Виртуальное окружение
 venv/
 env/
 .env
@@ -12,6 +12,11 @@ __pycache__/
 logs/
 *.log
 
+# Selenium и WebDriver
+chromedriver
+*.chromedriver
+.wdm/
+
 # Дополнительные файлы IDE
 .idea/
-.vscode/" > .gitignore
+.vscode/
