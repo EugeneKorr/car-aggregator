@@ -28,35 +28,58 @@ class KiaScraper(BaseScraper):
         
         logger.info(f"🔍 Запрос автомобилей KIA с фильтрами: {json.dumps(filters)}")
         
-        # Получаем общие данные о моделях
-        all_models_data = await self._fetch_all_models()
+        # Проверяем наличие реальных ID в базе данных
+        car_ids_collection = self.db.db["car_ids"]
+        car_ids_data = await car_ids_collection.find().to_list(length=100)
         
-        if not all_models_data:
-            logger.error("❌ Не удалось получить данные о моделях")
-            # Используем резервные данные, если API недоступно
-            return await self._generate_fallback_data(filters)
-        
-        # Сохраняем статистику по моделям
-        await self._save_models_stats(all_models_data)
-        
-        # Обрабатываем каждую модель
-        all_cars = []
-        model_filter = filters.get("model", "")
-        
-        for model_data in all_models_data.get("modelos", []):
-            model_name = model_data.get("nombre", "")
-            model_count = int(model_data.get("disponibles", "0"))
+        # Если есть данные о реальных ID, используем их
+        if car_ids_data:
+            logger.info("✅ Найдены данные о реальных ID автомобилей")
             
-            # Если указан фильтр по модели и текущая модель не соответствует, пропускаем
-            if model_filter and model_name.lower() != model_filter.lower():
-                continue
+            # Обрабатываем данные из базы
+            all_cars = []
+            model_filter = filters.get("model", "")
+            
+            for model_data in car_ids_data:
+                model_name = model_data["model"]
+                car_ids = model_data.get("ids", [])
                 
-            # Получаем список автомобилей данной модели
-            model_cars = await self._process_model(model_name, model_count)
-            all_cars.extend(model_cars)
+                # Если указан фильтр по модели и текущая модель не соответствует, пропускаем
+                if model_filter and model_name.lower() != model_filter.lower():
+                    continue
+                    
+                logger.info(f"🚗 Обработка модели {model_name}: найдено {len(car_ids)} ID автомобилей")
+                
+                # Получаем данные из базы для всех автомобилей этой модели
+                query = {"model": model_name, "is_active": True}
+                
+                # Добавляем фильтры по цене, если указаны
+                if "min_price" in filters:
+                    query["price"] = {"$gte": filters["min_price"]}
+                if "max_price" in filters:
+                    if "price" in query:
+                        query["price"]["$lte"] = filters["max_price"]
+                    else:
+                        query["price"] = {"$lte": filters["max_price"]}
+                
+                # Получаем автомобили из базы данных
+                model_cars = await self.db.cars_collection.find(query).to_list(length=1000)
+                
+                if model_cars:
+                    for car in model_cars:
+                        # Удаляем _id для JSON-сериализации
+                        if "_id" in car:
+                            car["_id"] = str(car["_id"])
+                        all_cars.append(car)
+                else:
+                    logger.warning(f"⚠️ Не найдено автомобилей для модели {model_name} в базе данных")
+            
+            logger.info(f"✅ Всего найдено {len(all_cars)} автомобилей KIA")
+            return all_cars
         
-        logger.info(f"✅ Всего обработано {len(all_cars)} автомобилей KIA")
-        return all_cars
+        # Если нет данных о реальных ID, используем резервный метод
+        logger.warning("⚠️ Не найдены данные о реальных ID автомобилей, использование резервных данных")
+        return await self._generate_fallback_data(filters)
     
     async def _fetch_all_models(self):
         """
