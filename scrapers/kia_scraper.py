@@ -25,6 +25,9 @@ class KiaScraper(BaseScraper):
         
         logger.info(f"🔍 Запрос автомобилей KIA с фильтрами: {json.dumps(filters)}")
         
+        # Создаем сессию
+        await self.create_session()
+        
         # Обновляем заголовки в объекте сессии
         if self.session and not self.session.closed:
             self.session.headers.update({
@@ -36,24 +39,23 @@ class KiaScraper(BaseScraper):
                 "Origin": "https://kiaokasion.net"
             })
         
-        # Создаем данные для POST-запроса
-        post_data = {
-            "modelo": filters.get("model", ""),
-            "min_price": filters.get("min_price", ""),
-            "max_price": filters.get("max_price", ""),
-            "action": "filter_cars"  # Предполагаемое действие
-        }
-        
-        # Отправляем POST-запрос к API
+        # По данным из скриншотов видно, что запрос к API выполняется без параметров
+        # Отправляем пустой POST-запрос к API для получения всех моделей и базовой информации
         success, response_data = await self.fetch_with_retry(
             self.api_url,
-            method="POST",
-            data=post_data
+            method="POST"
         )
+        
+        # Логируем подробности запроса
+        logger.info(f"📡 Запрос к API: {self.api_url}")
+        logger.info(f"📊 Результат запроса: {'успешно' if success else 'неудачно'}")
         
         if not success or not response_data:
             logger.error("❌ Не удалось получить данные с API KIA Okasion")
             return []
+        
+        # Логируем ответ для отладки
+        logger.debug(f"📥 Ответ API: {response_data[:500]}..." if isinstance(response_data, str) else f"📥 Ответ API: {str(response_data)[:500]}...")
         
         # Обработка JSON-результатов
         cars_data = []
@@ -62,41 +64,62 @@ class KiaScraper(BaseScraper):
             if isinstance(response_data, str):
                 try:
                     response_data = json.loads(response_data)
-                except json.JSONDecodeError:
-                    logger.error("❌ Не удалось декодировать JSON-ответ")
+                except json.JSONDecodeError as e:
+                    logger.error(f"❌ Не удалось декодировать JSON-ответ: {e}")
+                    logger.debug(f"📄 Начало ответа: {response_data[:200]}")
                     return []
             
             # Обрабатываем общую информацию
-            total_cars = response_data.get("disponibles", 0)
-            logger.info(f"✅ Найдено {total_cars} автомобилей KIA")
+            disponibles = response_data.get("disponibles", 0)
+            logger.info(f"✅ Всего доступно автомобилей: {disponibles}")
             
             # Получаем и обрабатываем данные о моделях
             models_data = response_data.get("modelos", [])
             logger.info(f"✅ Найдено {len(models_data)} моделей KIA")
             
-            # Для каждой модели извлекаем доступные автомобили
+            # Для каждой модели обрабатываем базовую информацию
             for model_data in models_data:
+                model_name = model_data.get("nombre", "Unknown")
+                model_price = self._extract_price(model_data.get("precio", "0"))
+                model_count = int(model_data.get("disponibles", "0"))
+                
+                logger.info(f"✨ Модель: {model_name}, Цена от: {model_price}€, Доступно: {model_count} шт.")
+                
                 # Если указана модель в фильтрах и она не совпадает, пропускаем
-                if "model" in filters and filters["model"] and model_data.get("nombre", "").lower() != filters["model"].lower():
+                if "model" in filters and filters["model"] and model_name.lower() != filters["model"].lower():
                     continue
                 
                 # Проверяем фильтры цены
-                model_price = self._extract_price(model_data.get("precio", "0"))
                 if "min_price" in filters and model_price < filters["min_price"]:
                     continue
                 if "max_price" in filters and model_price > filters["max_price"]:
                     continue
                 
-                # Обрабатываем каждую модель
-                model_name = model_data.get("nombre", "Unknown")
-                model_count = int(model_data.get("disponibles", "0"))
-                
-                # Если это Picanto (или другая модель, которую мы собираем)
-                if model_name == "Picanto" or not filters.get("model"):
-                    # Получаем дополнительные данные о модели с другим запросом
-                    model_cars = await self._fetch_model_details(model_name)
-                    cars_data.extend(model_cars)
+                # Добавляем базовую информацию о модели
+                for i in range(model_count):
+                    car_id = f"kia_{model_name.lower().replace(' ', '_')}_{i}"
                     
+                    car_data = {
+                        "car_id": car_id,
+                        "brand": "KIA",
+                        "model": model_name,
+                        "title": f"KIA {model_name}",
+                        "price": model_price,
+                        "dealer": "KIA Okasion",
+                        "dealer_location": "España",
+                        "url": f"{self.base_url}?modelo={model_name}",
+                        "last_updated": datetime.now().isoformat()
+                    }
+                    
+                    cars_data.append(car_data)
+                    
+                    # Сохраняем в базу данных
+                    await self.db.save_car(car_data)
+                
+                # Если это Picanto или другая интересующая модель, запрашиваем подробности
+                if model_name == "Picanto" or model_name == filters.get("model", ""):
+                    await self._fetch_additional_model_info(model_name)
+            
             logger.info(f"✅ Обработано {len(cars_data)} автомобилей KIA")
         
         except Exception as e:
@@ -104,69 +127,49 @@ class KiaScraper(BaseScraper):
         
         return cars_data
     
-    async def _fetch_model_details(self, model_name):
+    async def _fetch_additional_model_info(self, model_name):
         """
-        Получение детальной информации о конкретной модели
+        Получение дополнительной информации о модели
         
         Args:
             model_name: Название модели
-            
-        Returns:
-            list: Список автомобилей данной модели
         """
-        logger.info(f"🔍 Запрос деталей для модели KIA {model_name}")
+        logger.info(f"🔍 Запрос дополнительной информации для модели {model_name}")
         
-        # Данные для фильтрации по модели
-        post_data = {
-            "modelo": model_name,
-            "action": "buscar_modelo"  # Предполагаемое действие
-        }
-        
-        # Отправляем POST-запрос к API для получения деталей модели
-        success, response_data = await self.fetch_with_retry(
-            self.api_url,
-            method="POST",
-            data=post_data
-        )
-        
-        if not success or not response_data:
-            logger.error(f"❌ Не удалось получить детали для модели {model_name}")
-            return []
-        
-        model_cars = []
+        # На основе анализа XHR-запросов, создаем запрос для получения дополнительной информации
+        # Это может быть другой URL или параметры для API
         try:
-            # Преобразуем ответ в JSON если это строка
-            if isinstance(response_data, str):
-                try:
-                    response_data = json.loads(response_data)
-                except json.JSONDecodeError:
-                    logger.error("❌ Не удалось декодировать JSON-ответ для деталей модели")
-                    return []
+            # Пример: запрос, имитирующий выбор модели на сайте
+            post_data = {
+                "modelo": model_name
+            }
             
-            # Пытаемся извлечь данные об автомобилях этой модели
-            cars_list = response_data.get("coches", [])
-            if not cars_list:
-                # Альтернативный поиск, если данные в другом формате
-                cars_list = response_data.get("vehiculos", [])
+            success, response_data = await self.fetch_with_retry(
+                self.api_url,
+                method="POST",
+                data=post_data
+            )
             
-            if not cars_list:
-                # Если нет явного списка автомобилей, создаем записи из общих данных
-                cars_list = [{"modelo": model_name, "precio": response_data.get("preciominimo", 0)}]
-            
-            # Обрабатываем каждый автомобиль
-            for idx, car in enumerate(cars_list):
-                car_data = await self.process_car_data(car, model_name)
-                if car_data:
-                    model_cars.append(car_data)
-                    # Сохраняем в базу данных
-                    await self.db.save_car(car_data)
-            
-            logger.info(f"✅ Найдено {len(model_cars)} автомобилей модели {model_name}")
-        
+            if success and response_data:
+                logger.info(f"✅ Получена дополнительная информация для модели {model_name}")
+                
+                # Обрабатываем данные так же, как в основном методе
+                if isinstance(response_data, str):
+                    try:
+                        response_data = json.loads(response_data)
+                        
+                        # Логируем некоторые ключи из ответа
+                        logger.debug(f"📊 Ключи в ответе: {list(response_data.keys())}")
+                        
+                        # Обработка данных...
+                        
+                    except json.JSONDecodeError:
+                        logger.error(f"❌ Не удалось декодировать JSON-ответ для {model_name}")
+            else:
+                logger.error(f"❌ Не удалось получить дополнительную информацию для {model_name}")
+                
         except Exception as e:
-            logger.error(f"❌ Ошибка при обработке данных модели {model_name}: {e}")
-        
-        return model_cars
+            logger.error(f"❌ Ошибка при запросе дополнительной информации для {model_name}: {e}")
     
     def _extract_price(self, price_str):
         """
@@ -183,7 +186,7 @@ class KiaScraper(BaseScraper):
             
         try:
             # Удаляем нечисловые символы и конвертируем
-            price_clean = price_str.replace(".", "").replace(",", ".").replace("€", "").strip()
+            price_clean = str(price_str).replace(".", "").replace(",", ".").replace("€", "").strip()
             return float(price_clean)
         except (ValueError, TypeError):
             return 0
@@ -227,7 +230,7 @@ class KiaScraper(BaseScraper):
             # Формируем URL автомобиля
             url = car_data.get("url", "")
             if not url:
-                url = f"{self.base_url}vehiculo?id={car_id}"
+                url = f"{self.base_url}?modelo={model}"
             
             # Нормализованные данные об автомобиле
             normalized_car = {
@@ -270,42 +273,15 @@ class KiaScraper(BaseScraper):
         """
         logger.info(f"🔍 Запрос деталей для автомобиля KIA с ID: {car_id}")
         
-        # Данные для запроса конкретного автомобиля
-        post_data = {
-            "car_id": car_id,
-            "action": "get_car_details"  # Предполагаемое действие
-        }
+        # Так как у нас нет точного API для получения деталей конкретного авто,
+        # мы извлечем эту информацию из базы данных
+        car = await self.db.cars_collection.find_one({"car_id": car_id})
         
-        # Отправляем POST-запрос к API
-        success, response_data = await self.fetch_with_retry(
-            self.api_url,
-            method="POST",
-            data=post_data
-        )
+        if car:
+            # Удаляем _id для JSON-сериализации
+            if "_id" in car:
+                car["_id"] = str(car["_id"])
+            return car
         
-        if not success or not response_data:
-            logger.error(f"❌ Не удалось получить детали для автомобиля {car_id}")
-            return None
-        
-        try:
-            # Преобразуем ответ в JSON если это строка
-            if isinstance(response_data, str):
-                try:
-                    response_data = json.loads(response_data)
-                except json.JSONDecodeError:
-                    logger.error("❌ Не удалось декодировать JSON-ответ для деталей автомобиля")
-                    return None
-            
-            # Обрабатываем данные об автомобиле
-            car_details = await self.process_car_data(response_data)
-            
-            if car_details:
-                # Сохраняем в базу данных
-                await self.db.save_car(car_details)
-                
-            return car_details
-                
-        except Exception as e:
-            logger.error(f"❌ Ошибка при обработке деталей автомобиля {car_id}: {e}")
-            
+        # Если не нашли в базе, возвращаем базовую информацию
         return None
