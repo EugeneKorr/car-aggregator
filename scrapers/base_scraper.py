@@ -2,6 +2,7 @@ import asyncio
 import aiohttp
 import ssl
 import random
+import json
 from datetime import datetime
 from utils.logger import logger
 from config import Config
@@ -81,27 +82,57 @@ class BaseScraper:
                 
                 if method.upper() == "GET":
                     async with self.session.get(url, headers=headers, params=params) as response:
+                        logger.debug(f"📡 GET-запрос к {url}, статус: {response.status}")
                         if response.status == 200:
-                            if response.content_type == 'application/json':
+                            if 'application/json' in response.headers.get('Content-Type', ''):
                                 data = await response.json()
                             else:
                                 data = await response.text()
                             return True, data
                         else:
                             logger.warning(f"⚠️ Статус {response.status} при запросе {url} (попытка {attempt})")
+                            # Логируем текст ответа для отладки
+                            error_text = await response.text()
+                            logger.debug(f"📄 Текст ошибки: {error_text[:500]}...")
+                
                 elif method.upper() == "POST":
+                    # Логируем параметры запроса для отладки
+                    logger.debug(f"📡 POST-запрос к {url}")
+                    if json:
+                        logger.debug(f"📦 JSON-данные: {json}")
+                    if data:
+                        logger.debug(f"📦 Form-данные: {data}")
+                    if params:
+                        logger.debug(f"📦 URL-параметры: {params}")
+                    
                     async with self.session.post(url, headers=headers, json=json, data=data, params=params) as response:
+                        logger.debug(f"📡 POST-запрос к {url}, статус: {response.status}")
                         if response.status == 200:
-                            if response.content_type == 'application/json':
+                            content_type = response.headers.get('Content-Type', '')
+                            logger.debug(f"📄 Content-Type: {content_type}")
+                            
+                            if 'application/json' in content_type:
                                 data = await response.json()
                             else:
                                 data = await response.text()
+                                # Пытаемся распарсить JSON, даже если Content-Type не JSON
+                                if data and (data.startswith('{') or data.startswith('[')):
+                                    try:
+                                        data = json.loads(data)
+                                        logger.debug(f"📊 Успешно распарсили JSON из текстового ответа")
+                                    except json.JSONDecodeError:
+                                        logger.debug(f"📝 Ответ не является JSON, оставляем текстовым")
+                            
                             return True, data
                         else:
                             logger.warning(f"⚠️ Статус {response.status} при запросе {url} (попытка {attempt})")
+                            # Логируем текст ответа для отладки
+                            error_text = await response.text()
+                            logger.debug(f"📄 Текст ошибки: {error_text[:500]}...")
                 
                 # Экспоненциальное увеличение времени ожидания при повторных попытках
                 wait_time = Config.RETRY_DELAY * (2 ** (attempt - 1))
+                logger.debug(f"⏱️ Ожидание {wait_time} секунд перед следующей попыткой")
                 await asyncio.sleep(wait_time)
                 
             except Exception as e:
