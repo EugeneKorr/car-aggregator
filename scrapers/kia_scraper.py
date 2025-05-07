@@ -1,7 +1,5 @@
 import json
-import re
 from datetime import datetime
-from bs4 import BeautifulSoup
 from config import Config
 from scrapers.base_scraper import BaseScraper
 from utils.logger import logger
@@ -10,6 +8,7 @@ class KiaScraper(BaseScraper):
     def __init__(self, db):
         super().__init__(db)
         self.base_url = Config.KIA_BASE_URL
+        self.api_url = Config.KIA_API_URL
         
     async def fetch_cars(self, filters=None):
         """
@@ -29,57 +28,75 @@ class KiaScraper(BaseScraper):
         # Обновляем заголовки в объекте сессии
         if self.session and not self.session.closed:
             self.session.headers.update({
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Accept-Language": "es-ES,es;q=0.9,en-US;q=0.8,en;q=0.7",
-                "Referer": "https://www.kia.com/es/",
-                "Origin": "https://www.kia.com"
+                "Accept": "application/json, text/javascript, */*; q=0.01",
+                "Accept-Language": "es-ES,es;q=0.9,ru;q=0.8,en-US;q=0.7,en;q=0.6",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "X-Requested-With": "XMLHttpRequest",
+                "Referer": "https://kiaokasion.net/kia/",
+                "Origin": "https://kiaokasion.net"
             })
         
-        # Получаем HTML-страницу (без передачи headers в метод)
-        success, html_content = await self.fetch_with_retry(
-            self.base_url,
-            method="GET"
+        # Создаем данные для POST-запроса
+        post_data = {
+            "modelo": filters.get("model", ""),
+            "min_price": filters.get("min_price", ""),
+            "max_price": filters.get("max_price", ""),
+            "action": "filter_cars"  # Предполагаемое действие
+        }
+        
+        # Отправляем POST-запрос к API
+        success, response_data = await self.fetch_with_retry(
+            self.api_url,
+            method="POST",
+            data=post_data
         )
         
-        if not success or not html_content:
-            logger.error("❌ Не удалось получить данные с сайта KIA Outlet")
+        if not success or not response_data:
+            logger.error("❌ Не удалось получить данные с API KIA Okasion")
             return []
         
-        # Обработка результатов
+        # Обработка JSON-результатов
         cars_data = []
         try:
-            # Парсим HTML
-            soup = BeautifulSoup(html_content, 'html.parser')
+            # Если результат получен как строка, преобразуем его в JSON
+            if isinstance(response_data, str):
+                try:
+                    response_data = json.loads(response_data)
+                except json.JSONDecodeError:
+                    logger.error("❌ Не удалось декодировать JSON-ответ")
+                    return []
             
-            # Ищем контейнеры с автомобилями на странице
-            car_containers = soup.select('.vehicle-card, .car-item, .vehicle-list-item')
+            # Обрабатываем общую информацию
+            total_cars = response_data.get("disponibles", 0)
+            logger.info(f"✅ Найдено {total_cars} автомобилей KIA")
             
-            if not car_containers:
-                # Если не нашли по стандартным классам, пробуем другие селекторы
-                car_containers = soup.select('.product-item, .listing-item, .vehicle')
+            # Получаем и обрабатываем данные о моделях
+            models_data = response_data.get("modelos", [])
+            logger.info(f"✅ Найдено {len(models_data)} моделей KIA")
             
-            logger.info(f"✅ Найдено {len(car_containers)} контейнеров с автомобилями KIA")
-            
-            # Если элементы всё равно не найдены, ищем скрипты с данными
-            if not car_containers:
-                logger.info("⚠️ Контейнеры с автомобилями не найдены, пробуем извлечь данные из скриптов")
+            # Для каждой модели извлекаем доступные автомобили
+            for model_data in models_data:
+                # Если указана модель в фильтрах и она не совпадает, пропускаем
+                if "model" in filters and filters["model"] and model_data.get("nombre", "").lower() != filters["model"].lower():
+                    continue
                 
-                # Поиск JSON-данных в скриптах
-                script_data = self._extract_script_data(soup)
-                if script_data:
-                    cars_data = await self._process_script_data(script_data, filters)
-                    return cars_data
-            
-            # Обрабатываем каждый найденный контейнер
-            for idx, container in enumerate(car_containers):
-                car_data = await self._extract_car_data_from_html(container, idx)
-                if car_data:
-                    # Применяем фильтры
-                    if self._apply_filters(car_data, filters):
-                        cars_data.append(car_data)
-                        # Сохраняем в базу данных
-                        await self.db.save_car(car_data)
-            
+                # Проверяем фильтры цены
+                model_price = self._extract_price(model_data.get("precio", "0"))
+                if "min_price" in filters and model_price < filters["min_price"]:
+                    continue
+                if "max_price" in filters and model_price > filters["max_price"]:
+                    continue
+                
+                # Обрабатываем каждую модель
+                model_name = model_data.get("nombre", "Unknown")
+                model_count = int(model_data.get("disponibles", "0"))
+                
+                # Если это Picanto (или другая модель, которую мы собираем)
+                if model_name == "Picanto" or not filters.get("model"):
+                    # Получаем дополнительные данные о модели с другим запросом
+                    model_cars = await self._fetch_model_details(model_name)
+                    cars_data.extend(model_cars)
+                    
             logger.info(f"✅ Обработано {len(cars_data)} автомобилей KIA")
         
         except Exception as e:
@@ -87,262 +104,130 @@ class KiaScraper(BaseScraper):
         
         return cars_data
     
-    def _extract_script_data(self, soup):
+    async def _fetch_model_details(self, model_name):
         """
-        Извлекает данные из скриптов на странице
+        Получение детальной информации о конкретной модели
         
         Args:
-            soup: BeautifulSoup объект
+            model_name: Название модели
             
         Returns:
-            dict: Данные об автомобилях из скриптов или None
+            list: Список автомобилей данной модели
         """
-        # Ищем скрипты, которые могут содержать данные
-        scripts = soup.find_all('script')
-        for script in scripts:
-            script_text = script.string
-            if not script_text:
-                continue
-                
-            # Ищем JSON-блоки с данными автомобилей
-            json_pattern = r'var\s+vehicleData\s*=\s*({.*?});'
-            matches = re.search(json_pattern, script_text, re.DOTALL)
-            if matches:
-                try:
-                    return json.loads(matches.group(1))
-                except json.JSONDecodeError:
-                    continue
-                    
-            # Альтернативные варианты JSON-блоков
-            alt_patterns = [
-                r'window\.initialData\s*=\s*({.*?});',
-                r'var\s+cars\s*=\s*(\[.*?\]);',
-                r'data-vehicles\s*=\s*\'({.*?})\'',
-            ]
-            
-            for pattern in alt_patterns:
-                matches = re.search(pattern, script_text, re.DOTALL)
-                if matches:
-                    try:
-                        return json.loads(matches.group(1))
-                    except json.JSONDecodeError:
-                        continue
+        logger.info(f"🔍 Запрос деталей для модели KIA {model_name}")
         
-        return None
-    
-    async def _process_script_data(self, script_data, filters):
-        """
-        Обрабатывает данные об автомобилях из скриптов
+        # Данные для фильтрации по модели
+        post_data = {
+            "modelo": model_name,
+            "action": "buscar_modelo"  # Предполагаемое действие
+        }
         
-        Args:
-            script_data: Данные из скриптов
-            filters: Фильтры для автомобилей
-            
-        Returns:
-            list: Список обработанных данных об автомобилях
-        """
-        cars_data = []
+        # Отправляем POST-запрос к API для получения деталей модели
+        success, response_data = await self.fetch_with_retry(
+            self.api_url,
+            method="POST",
+            data=post_data
+        )
         
-        # Обрабатываем разные форматы данных
-        if isinstance(script_data, dict):
-            if "vehicles" in script_data:
-                vehicles = script_data["vehicles"]
-            elif "cars" in script_data:
-                vehicles = script_data["cars"]
-            else:
-                vehicles = [script_data]
-        elif isinstance(script_data, list):
-            vehicles = script_data
-        else:
-            vehicles = []
+        if not success or not response_data:
+            logger.error(f"❌ Не удалось получить детали для модели {model_name}")
+            return []
         
-        for idx, vehicle in enumerate(vehicles):
-            car_data = await self.process_car_data(vehicle)
-            if car_data and self._apply_filters(car_data, filters):
-                cars_data.append(car_data)
-                await self.db.save_car(car_data)
-        
-        return cars_data
-    
-    async def _extract_car_data_from_html(self, container, idx):
-        """
-        Извлекает данные об автомобиле из HTML-контейнера
-        
-        Args:
-            container: HTML-элемент с данными об автомобиле
-            idx: Индекс автомобиля
-            
-        Returns:
-            dict: Данные об автомобиле
-        """
+        model_cars = []
         try:
-            # Генерируем ID на основе текста контейнера или индекса
-            car_id = f"kia_{idx}_{hash(container.text) % 10000}"
+            # Преобразуем ответ в JSON если это строка
+            if isinstance(response_data, str):
+                try:
+                    response_data = json.loads(response_data)
+                except json.JSONDecodeError:
+                    logger.error("❌ Не удалось декодировать JSON-ответ для деталей модели")
+                    return []
             
-            # Извлекаем заголовок
-            title_elem = container.select_one('.vehicle-title, .car-title, .model-name, h2, h3')
-            title = title_elem.text.strip() if title_elem else "KIA Unknown Model"
+            # Пытаемся извлечь данные об автомобилях этой модели
+            cars_list = response_data.get("coches", [])
+            if not cars_list:
+                # Альтернативный поиск, если данные в другом формате
+                cars_list = response_data.get("vehiculos", [])
             
-            # Извлекаем модель
-            model = None
-            model_elem = container.select_one('.model, .car-model')
-            if model_elem:
-                model = model_elem.text.strip()
-            else:
-                # Пытаемся извлечь модель из заголовка
-                model_match = re.search(r'KIA\s+([A-Za-z0-9\s]+)', title)
-                if model_match:
-                    model = model_match.group(1).strip()
-                else:
-                    model = "Unknown Model"
+            if not cars_list:
+                # Если нет явного списка автомобилей, создаем записи из общих данных
+                cars_list = [{"modelo": model_name, "precio": response_data.get("preciominimo", 0)}]
             
-            # Извлекаем цену
-            price = 0
-            price_elem = container.select_one('.price, .vehicle-price, .car-price')
-            if price_elem:
-                price_text = price_elem.text.strip()
-                # Извлекаем числа из текста
-                price_match = re.search(r'(\d[\d\.,]+)', price_text)
-                if price_match:
-                    price_str = price_match.group(1).replace('.', '').replace(',', '.')
-                    try:
-                        price = float(price_str)
-                    except ValueError:
-                        pass
+            # Обрабатываем каждый автомобиль
+            for idx, car in enumerate(cars_list):
+                car_data = await self.process_car_data(car, model_name)
+                if car_data:
+                    model_cars.append(car_data)
+                    # Сохраняем в базу данных
+                    await self.db.save_car(car_data)
             
-            # Извлекаем год
-            year = None
-            year_elem = container.select_one('.year, .vehicle-year')
-            if year_elem:
-                year_text = year_elem.text.strip()
-                year_match = re.search(r'(\d{4})', year_text)
-                if year_match:
-                    year = int(year_match.group(1))
-            
-            # Извлекаем изображение
-            images = []
-            img_elem = container.select_one('img')
-            if img_elem and 'src' in img_elem.attrs:
-                image_url = img_elem['src']
-                if not image_url.startswith('http'):
-                    image_url = f"https://www.kia.com{image_url}"
-                images.append(image_url)
-            
-            # Извлекаем URL детальной страницы
-            url = self.base_url
-            link_elem = container.select_one('a')
-            if link_elem and 'href' in link_elem.attrs:
-                url_path = link_elem['href']
-                if not url_path.startswith('http'):
-                    url = f"https://www.kia.com{url_path}"
-                else:
-                    url = url_path
-            
-            # Создаем структуру данных об автомобиле
-            car_data = {
-                "car_id": car_id,
-                "brand": "KIA",
-                "model": model,
-                "title": title,
-                "year": year,
-                "mileage": 0,  # Новые автомобили без пробега
-                "fuel_type": "Unknown",
-                "transmission": "Unknown",
-                "color": "Unknown",
-                "power": 0,
-                "price": price,
-                "images": images,
-                "features": [],
-                "description": title,
-                "dealer": "KIA Outlet",
-                "dealer_location": "España",
-                "url": url,
-                "warranty": "7 años",
-                "last_updated": datetime.now().isoformat()
-            }
-            
-            return car_data
-            
+            logger.info(f"✅ Найдено {len(model_cars)} автомобилей модели {model_name}")
+        
         except Exception as e:
-            logger.error(f"❌ Ошибка при извлечении данных из HTML: {e}")
-            return None
+            logger.error(f"❌ Ошибка при обработке данных модели {model_name}: {e}")
+        
+        return model_cars
     
-    def _apply_filters(self, car_data, filters):
+    def _extract_price(self, price_str):
         """
-        Применяет фильтры к данным об автомобиле
+        Извлекает числовое значение цены из строки
         
         Args:
-            car_data: Данные об автомобиле
-            filters: Фильтры
+            price_str: Строка с ценой
             
         Returns:
-            bool: True если автомобиль соответствует фильтрам
+            float: Числовое значение цены
         """
-        # Фильтр по цене
-        if "min_price" in filters and car_data["price"] < filters["min_price"]:
-            return False
-        if "max_price" in filters and car_data["price"] > filters["max_price"]:
-            return False
-        
-        # Фильтр по моделям
-        if "models" in filters and filters["models"]:
-            if car_data["model"] not in filters["models"]:
-                return False
-        
-        # Фильтр по пробегу
-        if "min_mileage" in filters and car_data["mileage"] < filters["min_mileage"]:
-            return False
-        if "max_mileage" in filters and car_data["mileage"] > filters["max_mileage"]:
-            return False
-        
-        return True
+        if not price_str:
+            return 0
+            
+        try:
+            # Удаляем нечисловые символы и конвертируем
+            price_clean = price_str.replace(".", "").replace(",", ".").replace("€", "").strip()
+            return float(price_clean)
+        except (ValueError, TypeError):
+            return 0
     
-    async def process_car_data(self, car_data):
+    async def process_car_data(self, car_data, model_name=None):
         """
         Обработка и нормализация данных об автомобиле KIA
         
         Args:
             car_data: Словарь с сырыми данными об автомобиле
+            model_name: Название модели (если известно)
             
         Returns:
             dict: Обработанные данные об автомобиле
         """
         try:
-            # Генерируем ID если его нет
-            car_id = car_data.get("id", f"kia_{hash(str(car_data)) % 10000}")
+            # Определяем модель
+            model = model_name or car_data.get("modelo", car_data.get("nombre", "Unknown"))
             
-            # Извлекаем модель
-            model = car_data.get("modelDisplayName", car_data.get("model", "Unknown"))
+            # Генерируем ID
+            car_id = car_data.get("id", car_data.get("car_id", f"kia_{model}_{hash(str(car_data)) % 10000}"))
+            
+            # Извлекаем цену
+            price = self._extract_price(car_data.get("precio", car_data.get("price", "0")))
             
             # Извлекаем год
-            year = car_data.get("year", None)
-            if isinstance(year, str):
-                year_match = re.search(r'(\d{4})', year)
+            year = car_data.get("year", car_data.get("ano", None))
+            if not year and "title" in car_data:
+                import re
+                year_match = re.search(r'(\d{4})', car_data["title"])
                 if year_match:
                     year = int(year_match.group(1))
             
-            # Обработка цены
-            price = car_data.get("price", 0)
-            if isinstance(price, str):
-                price = price.replace(".", "").replace(",", ".").replace("€", "").strip()
-                try:
-                    price = float(price)
-                except ValueError:
-                    price = 0
-            
-            # Извлечение изображений
+            # Извлекаем изображения
             images = []
-            if "thumbnailImages" in car_data and car_data["thumbnailImages"]:
-                images = [img for img in car_data["thumbnailImages"] if img]
-            elif "images" in car_data and car_data["images"]:
-                images = [img for img in car_data["images"] if img]
+            if "imagenes" in car_data and car_data["imagenes"]:
+                images = [img for img in car_data["imagenes"] if img]
             elif "image" in car_data and car_data["image"]:
                 images = [car_data["image"]]
             
-            # Формирование URL страницы автомобиля
-            car_url = car_data.get("url", self.base_url)
-            if not car_url.startswith("http"):
-                car_url = f"{self.base_url}?id={car_id}"
+            # Формируем URL автомобиля
+            url = car_data.get("url", "")
+            if not url:
+                url = f"{self.base_url}vehiculo?id={car_id}"
             
             # Нормализованные данные об автомобиле
             normalized_car = {
@@ -351,19 +236,19 @@ class KiaScraper(BaseScraper):
                 "model": model,
                 "title": f"KIA {model} {year or ''}".strip(),
                 "year": year,
-                "mileage": car_data.get("mileage", 0),
-                "fuel_type": car_data.get("fuelType", "Unknown"),
-                "transmission": car_data.get("transmissionType", "Unknown"),
-                "color": car_data.get("exteriorColorName", car_data.get("color", "Unknown")),
-                "power": car_data.get("power", 0),
+                "mileage": car_data.get("kilometros", car_data.get("kms", 0)),
+                "fuel_type": car_data.get("combustible", "Unknown"),
+                "transmission": car_data.get("cambio", "Unknown"),
+                "color": car_data.get("color", "Unknown"),
+                "power": car_data.get("potencia", 0),
                 "price": price,
                 "images": images,
-                "features": car_data.get("features", []),
-                "description": car_data.get("description", ""),
-                "dealer": "KIA Outlet",
-                "dealer_location": car_data.get("dealerCity", "España"),
-                "url": car_url,
-                "warranty": car_data.get("warranty", "7 años"),
+                "features": car_data.get("equipamiento", []),
+                "description": car_data.get("descripcion", f"KIA {model}"),
+                "dealer": "KIA Okasion",
+                "dealer_location": car_data.get("ubicacion", "España"),
+                "url": url,
+                "warranty": "Garantía Oficial KIA",
                 "last_updated": datetime.now().isoformat()
             }
             
@@ -375,7 +260,7 @@ class KiaScraper(BaseScraper):
     
     async def fetch_car_details(self, car_id):
         """
-        Получение детальной информации об автомобиле
+        Получение детальной информации об автомобиле по ID
         
         Args:
             car_id: ID автомобиля
@@ -383,51 +268,44 @@ class KiaScraper(BaseScraper):
         Returns:
             dict: Полные данные об автомобиле
         """
-        # Вместо обращения к API, получаем данные из HTML-страницы
-        details_url = f"{self.base_url}?id={car_id}"
+        logger.info(f"🔍 Запрос деталей для автомобиля KIA с ID: {car_id}")
         
-        success, html_content = await self.fetch_with_retry(details_url)
+        # Данные для запроса конкретного автомобиля
+        post_data = {
+            "car_id": car_id,
+            "action": "get_car_details"  # Предполагаемое действие
+        }
         
-        if not success or not html_content:
-            logger.error(f"❌ Не удалось получить детали автомобиля KIA {car_id}")
+        # Отправляем POST-запрос к API
+        success, response_data = await self.fetch_with_retry(
+            self.api_url,
+            method="POST",
+            data=post_data
+        )
+        
+        if not success or not response_data:
+            logger.error(f"❌ Не удалось получить детали для автомобиля {car_id}")
             return None
         
         try:
-            # Парсим HTML
-            soup = BeautifulSoup(html_content, 'html.parser')
+            # Преобразуем ответ в JSON если это строка
+            if isinstance(response_data, str):
+                try:
+                    response_data = json.loads(response_data)
+                except json.JSONDecodeError:
+                    logger.error("❌ Не удалось декодировать JSON-ответ для деталей автомобиля")
+                    return None
             
-            # Пытаемся найти контейнер с детальной информацией
-            detail_container = soup.select_one('.vehicle-detail, .car-detail, .product-detail')
+            # Обрабатываем данные об автомобиле
+            car_details = await self.process_car_data(response_data)
             
-            if not detail_container:
-                # Пробуем извлечь данные из скриптов
-                script_data = self._extract_script_data(soup)
-                if script_data:
-                    vehicle_data = None
-                    
-                    # Ищем данные конкретного автомобиля в скрипте
-                    if isinstance(script_data, dict):
-                        if "vehicles" in script_data:
-                            for vehicle in script_data["vehicles"]:
-                                if str(vehicle.get("id", "")) == str(car_id):
-                                    vehicle_data = vehicle
-                                    break
-                        else:
-                            vehicle_data = script_data
-                    
-                    if vehicle_data:
-                        car_details = await self.process_car_data(vehicle_data)
-                        if car_details:
-                            await self.db.save_car(car_details)
-                        return car_details
-            else:
-                # Если нашли контейнер, извлекаем данные
-                car_data = await self._extract_car_data_from_html(detail_container, car_id)
-                if car_data:
-                    await self.db.save_car(car_data)
-                return car_data
-        
+            if car_details:
+                # Сохраняем в базу данных
+                await self.db.save_car(car_details)
+                
+            return car_details
+                
         except Exception as e:
-            logger.error(f"❌ Ошибка при обработке деталей автомобиля KIA: {e}")
-        
+            logger.error(f"❌ Ошибка при обработке деталей автомобиля {car_id}: {e}")
+            
         return None
