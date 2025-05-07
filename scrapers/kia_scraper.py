@@ -553,7 +553,7 @@ class KiaScraper(BaseScraper):
                     "dealer_phone": "+34 900 100 200",
                     "dealer_address": "Calle Principal, 123",
                     "matriculation_date": f"{random.randint(1, 28)}/{random.randint(1, 12)}/{year}",
-                    "license_plate": f"{random.randint(1000, 9999)}{chr(65 + random.randint(0, 25))}{chr(65 + random.randint(0, 25)}{chr(65 + random.randint(0, 25)}",
+                    "license_plate": f"{random.randint(1000, 9999)}{chr(65 + random.randint(0, 25))}{chr(65 + random.randint(0, 25))}{chr(65 + random.randint(0, 25))}",
                     "url": f"{self.base_url}?modelo={model_name}",
                     "warranty": f"{random.choice([24, 36, 48, 72])} месяцев",
                     "engine_size": "0" if fuel_type == "Eléctrico" else random.choice(["1000", "1200", "1400", "1600"]),
